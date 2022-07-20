@@ -4,7 +4,14 @@
 #
 # Asset meta data should only be ignored when the corresponding asset is also ignored
 !/[Aa]ssets/**/*.meta
-
+/Project/UniTask/[Ll]ibrary/
+/Project/UniTask//[Tt]emp/
+/Project/UniTask//[Oo]bj/
+/Project/UniTask//[Bb]uild/
+/Project/UniTask//[Bb]uilds/
+/Project/UniTask//[Ll]ogs/
+/Project/UniTask//[Mm]emoryCaptures/
+/Project/UniTask/.vscode/
 # Uncomment this line if you wish to ignore the asset store tools plugin
 # /[Aa]ssets/AssetStoreTools*
 
