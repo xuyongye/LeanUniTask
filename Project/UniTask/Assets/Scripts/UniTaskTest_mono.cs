@@ -3,7 +3,9 @@ using Cysharp.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.Networking;
-
+using Cysharp.Threading.Tasks.Linq;
+using System;
+using TMPro;
 public class UniTaskTest_mono : MonoBehaviour
 {
     public Text testText;
@@ -180,52 +182,227 @@ public class UniTaskTest_mono : MonoBehaviour
     #endregion
 
     #region  真正的多线程异步
-    public Text tempText;
-    private async UniTaskVoid StandardRun()
-    {
-        // 切换到多线程进行操作
-        await UniTask.RunOnThreadPool(() =>
-        {
-            Debug.Log("处于多线程异步中");
-            try
-            {
-                //这段会报错.
-                tempText.text = "非主线程,不能使用unity 对象";
-            }
-            catch (System.Exception)
-            {
-                Debug.LogError("非主线程");
-            }
-        });
-        await UniTask.Delay(System.TimeSpan.FromSeconds(2f));
-        // 切换回主线程
-        await UniTask.SwitchToMainThread();
-        tempText.text = "主线程,正常使用unity 对象";
-        Debug.Log("切换回主线程");
-    }
+    // public Text tempText;
+    // private async UniTaskVoid StandardRun()
+    // {
+    //     // 切换到多线程进行操作
+    //     await UniTask.RunOnThreadPool(() =>
+    //     {
+    //         Debug.Log("处于多线程异步中");
+    //         try
+    //         {
+    //             //这段会报错.
+    //             tempText.text = "非主线程,不能使用unity 对象";
+    //         }
+    //         catch (System.Exception)
+    //         {
+    //             Debug.LogError("非主线程");
+    //         }
+    //     });
+    //     await UniTask.Delay(System.TimeSpan.FromSeconds(2f));
+    //     // 切换回主线程
+    //     await UniTask.SwitchToMainThread();
+    //     tempText.text = "主线程,正常使用unity 对象";
+    //     Debug.Log("切换回主线程");
+    // }
 
-    private async UniTaskVoid YieldRun()
-    {
-        //切换到多线程池
-        await UniTask.SwitchToThreadPool();
-        try
-        {
-            tempText.text = "非主线程, 不能使用unity 对象";
-        }
-        catch (System.Exception)
-        {
-            Debug.LogError("非主线程");
-        }
-        await UniTask.Delay(System.TimeSpan.FromSeconds(2f));
-        //切换回主线程了
-        await UniTask.Yield(PlayerLoopTiming.Update);
-        tempText.text = "主线程, 正常使用unity 对象";
-    }
+    // private async UniTaskVoid YieldRun()
+    // {
+    //     //切换到多线程池
+    //     await UniTask.SwitchToThreadPool();
+    //     try
+    //     {
+    //         tempText.text = "非主线程, 不能使用unity 对象";
+    //     }
+    //     catch (System.Exception)
+    //     {
+    //         Debug.LogError("非主线程");
+    //     }
+    //     await UniTask.Delay(System.TimeSpan.FromSeconds(2f));
+    //     //切换回主线程了
+    // {
+    //     // StandardRun().Forget();
 
+    //     YieldRun().Forget();
+    // }
+
+    #endregion
+
+    #region  异步迭代器
+
+    public Button CubeBtn;
     private void Start()
     {
-        // StandardRun().Forget();
-        YieldRun().Forget();
+        //点击cube
+        CheckCubeClick(CubeBtn.GetCancellationTokenOnDestroy()).Forget();
+        //双击
+        CheckDoubleClick(doubleClickBtn, doubleClickBtn.GetCancellationTokenOnDestroy()).Forget();
+        //点击冷却    
+        CheckCooldownClickButton(coolDownBtn, coolDownBtn.GetCancellationTokenOnDestroy()).Forget();
+        //初始化Slier数据
+        InitSlider();
+    }
+
+    /// <summary>
+    /// 点击立方体的事件 
+    /// </summary>
+    /// <param name="token"></param>
+    /// <returns></returns>
+    private async UniTaskVoid CheckCubeClick(CancellationToken token)
+    {
+        //创建一个按钮的迭代器
+        IUniTaskAsyncEnumerable<AsyncUnit> asyncEnumerable = CubeBtn.OnClickAsAsyncEnumerable();
+        //取前三个点击进行迭代判断
+        await asyncEnumerable.Take(3).ForEachAsync((_/*  没有用的参数 */, index) =>
+        {
+            //如果取消,则返回
+            if (token.IsCancellationRequested) return;
+            //第一次点击
+            if (index == 0)
+                Debug.Log("点击了矩形一次");
+            if (index == 1)
+                Debug.Log("点击了第二次");
+            if (index == 2)
+                Debug.Log("点击了第三次");
+        }, token);
+
+        //取出的3次点击都处理了以后进行到这步(在最后一次迭代完成的同时进行到这步)
+        Destroy(CubeBtn.gameObject);
+    }
+
+    public Button doubleClickBtn;
+
+    private async UniTaskVoid CheckDoubleClick(Button doubleClick, CancellationToken token)
+    {
+        //一直检测的按钮 如果项目中需要注意退出循环
+        while (true)
+        {
+            Debug.Log("等待双击按钮点击!");
+            //监听第一次按键的事件
+            var clickAsync = doubleClick.OnClickAsync(token);
+            await clickAsync;
+            Debug.Log("按钮第一次点击了");
+            //监听第二次按钮的事件
+            var secondClickAsync = doubleClick.OnClickAsync(token);
+            int resultIndex = await UniTask.WhenAny(UniTask.Delay(TimeSpan.FromSeconds(3))/* 双击超时事件 */,
+            secondClickAsync/* 第二次按钮按下了 */);
+            if (resultIndex == 1)
+            {
+                _currentHP.Value -= 10;//测试滑动条数值监听的
+                Debug.Log("双击了");
+            }
+            if (resultIndex == 0)
+            {
+                _currentHP.Value = 100;//测试滑动条数值监听的
+                Debug.Log("超时了");
+            }
+        }
+    }
+
+    public Button coolDownBtn;
+
+    private async UniTaskVoid CheckCooldownClickButton(Button coolDownBtn, CancellationToken token)
+    {
+        var asyncEnumerable = coolDownBtn.OnClickAsAsyncEnumerable();
+        await asyncEnumerable.ForEachAwaitAsync(async (_) =>
+        {
+            Debug.Log("触发, 进入冷却CD");
+            //等待CD时间
+            await UniTask.Delay(TimeSpan.FromSeconds(3), cancellationToken: token);
+            Debug.Log("冷却完成");
+        }, token);
+    }
+
+    ////////////////////////////////////Slider 更新(数值转化为异步迭代器)////////////////////////////////////////////////////////////////
+    public Slider slider;
+    public TextMeshProUGUI sliderNum;
+    int maxHP = 100;
+    /// <summary>
+    /// 异步的数值监听
+    /// </summary>
+    AsyncReactiveProperty<int> _currentHP;
+    /// <summary>
+    /// 用于取消的token
+    /// </summary>
+    CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+    CancellationTokenSource _linkedTokenSource;
+    public void InitSlider()
+    {
+        //初始化slider 的数值
+        slider.value = slider.maxValue = maxHP;
+        //异步的数值监听.
+        _currentHP = new AsyncReactiveProperty<int>(maxHP);
+        //重要:订阅异步数值的监听函数
+        //只要数值变化就会调用传入的委托函数
+        _currentHP.Subscribe(OnHpChange);
+        CheckHpChange(_currentHP).Forget();
+        CheckFirstTargetValue(_currentHP).Forget();
+        //绑定数据. 数值直接更新到组件上
+        _currentHP.BindTo(sliderNum);
+    }
+
+    private async UniTaskVoid OnHpChange(int hp)
+    {
+        _cancellationTokenSource.Cancel();//先取消上一次的异步.
+        _cancellationTokenSource = new CancellationTokenSource();
+        //创建两个用于取消的token
+        _linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, this.GetCancellationTokenOnDestroy());
+        //进行数值变化的异步(主要用于数值动画)
+        await SyncSlider(hp, _linkedTokenSource.Token);
+        //
+    }
+
+    private async UniTask SyncSlider(int hp, CancellationToken token)
+    {
+        float speed = 10f;
+        while (true)
+        {
+            //更改slider的值
+            slider.value = Mathf.Lerp(slider.value, hp, speed * Time.deltaTime);
+            //在unity的update线程里面进行更新. 同时如果取消token执行的时候返回取消结果. 也要停止
+            bool cancel = await UniTask.Yield(PlayerLoopTiming.Update, token).SuppressCancellationThrow();
+            if (cancel) return;//取消了. 返回
+            if (Mathf.Abs(slider.value - hp) < 0.01f)
+            {
+                slider.value = hp;
+                Debug.Log("到达目标");
+                return; //接近目标值了. 也直接返回.
+            }
+        }
+    }
+
+    /// <summary>
+    /// 迭代每次变化的数值.
+    /// </summary>
+    /// <param name="hp"></param>
+    /// <returns></returns>
+    private async UniTaskVoid CheckHpChange(AsyncReactiveProperty<int> hp)
+    {
+        int hpValue = hp.Value; //保存最初始的值
+        Debug.Log("初始值为:" + hpValue);
+        await hp.WithoutCurrent().ForEachAsync((_, index) => //过滤初始化的默认值
+        // await hp.ForEachAsync((_, index) => //不过滤初始的默认值. index 0 就是初始默认值
+        {
+            Debug.Log($"hp第{index}次变化. 变化值{hp.Value - hpValue}");
+        }, this.GetCancellationTokenOnDestroy());
+
+        //疑问????? 这个遍历会一直递增. 效率问题?
+    }
+
+
+    /// <summary>
+    /// 首次触发一次的异步.
+    /// </summary>
+    /// <param name="hp"></param>
+    /// <returns></returns>
+    private async UniTaskVoid CheckFirstTargetValue(AsyncReactiveProperty<int> hp)
+    {
+        //等待数值第一次小于指定数值
+        await hp.FirstAsync((value) =>
+        {
+            return hp < maxHP * 0.5f;
+        }, this.GetCancellationTokenOnDestroy());
+        Debug.Log("###数值第一次低于指定数值###");
     }
 
     #endregion
